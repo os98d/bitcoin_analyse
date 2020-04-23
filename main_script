@@ -1,0 +1,97 @@
+import os, json
+import networkx as nx
+import time
+from multiprocessing import Pool
+
+
+def get_block_stat(jsb, i):
+    jsb = jsb["blocks"][0]                                                                                              # зашли внутрь блока
+    n = jsb['n_tx']                                                                                                     # число транзакций
+    fee = jsb["fee"]                                                                                                    # комиссия за весь блок
+    tr_time = time.ctime(jsb["time"])                                                                                   # время выпуска блока
+    transactions = jsb["tx"]                                                                                            # считали в локальную переменную все транзакции
+                                                        ### построение графа
+    G = nx.MultiDiGraph()                                                                                               # нужен именно MDG
+    for i in transactions:                                                                                              # проходим все транзакции
+        inp = ["prev_out" in k for k in i["inputs"]]
+        outp = ['sum' in t for t in i["out"]]
+        if ("prev_out" in k for k in i["inputs"]) == True and ('sum' in t for t in i["out"]) == True:                   # правильный случай
+            send = sum(k["prev_out"]["value"] for k in i["inputs"])
+            got = sum(t["value"] for t in i["out"])
+            tr_fee = send-got # комиссия за транзакцию
+            G.add_edges_from([(k["prev_out"]["addr"], i["hash"] + ';' + str(tr_fee) + ',' + str(i["time"]),str(k["prev_out"]["value"])) for k in i["inputs"]])
+            G.add_edges_from([(i["hash"]+';'+str(tr_fee)+','+str(i["time"]), j["addr"],str(j["value"])) for j in i["out"]])
+            continue
+        elif ("prev_out" in k for k in i["inputs"]) != True and ('sum' in t for t in i["out"]) == True:
+            tr_fee = 0
+            G.add_edge("new coin", i["hash"] + ';' + "n_c" + ',' + str(i["time"]))
+            G.add_edges_from([(i["hash"] + ';' + "n_c" + ',' + str(i["time"]), j["addr"],str(j["value"])) for j in i["out"]])
+            continue
+        elif ("prev_out" in k for k in i["inputs"]) == True and ('sum' in t for t in i["out"]) != True:
+            tr_fee = 0t
+            G.add_edges_from([(k["prev_out"]["addr"], str(i["hash"]) + ';' + "c_s" + ',' + str(i["time"]), str(k["prev_out"]["value"])) for k in i["inputs"]])
+            G.add_edge(str(i["hash"]) + ';' + "c_s" + ',' + str(i["time"]), "coin spending")
+            continue
+        else:
+            tr_fee = 0
+            G.add_edges_from([(k["prev_out"]["addr"], str(i["hash"]) + ';' + "c_s" + ',' + str(i["time"]),
+                               str(k["prev_out"]["value"])) for k in i["inputs"]])
+            G.add_edge(str(i["hash"]) + ';' + "c_s" + ',' + str(i["time"]), "coin spending")
+            continue
+                                                            ### анализ графа
+    wcc = []                                                                                                            # список содержащий данные по компонентам связности
+    for lg in nx.weakly_connected_component_subgraphs(G):                                                               # обсчитываем каждую компоненту
+        atak_cost = 0
+        d_t = [e[e.index(",")+1:] for e in list(lg.nodes) if ";" in e]  # по е - транзакциям
+        n_t_w = len(d_t)
+        d_t = int(max(d_t))-int(min(d_t))
+        if d_t == 0: d_t = 1
+        ### atak_cost: считаем только input->trans + n_c[1] + s_c[0]
+        l_v = list(lg.edges)
+        l_n = list(lg.nodes)
+        for e in l_n:   # fee
+            if ";" in e and "n_c" not in e:     # комиссия есть только в переводах, собираем всю по вершинам транзакций
+                atak_cost += int(e[e.index(';') + 1:e.index(',')])
+        for v in l_v:   # отделяем usual от new_coin
+            a = lg.in_degree(v[0])
+            b = nx.shortest_path(lg, v[0], v[0])
+            if "n_c" in v[0]:
+                atak_cost += int(v[2])  # n_c
+            if lg.in_degree(v[0])==0 and v[0] != "new coin":  # usual
+                atak_cost+= int(v[2])-int(v[1][v[1].index(';') + 1:v[1].index(',')])
+            if lg.in_degree(v[0])==1 and lg.has_edge(v[1], v[0]) and ";" not in v[0]:
+                atak_cost+= int(v[2])-int(v[1][v[1].index(';') + 1:v[1].index(',')])
+        atak_cost = atak_cost/100000000                                                                                 # деление на сатоши => слева от точки целые биткойны
+        f = n_t_w / (d_t + atak_cost)
+        wcc.append([lg.number_of_nodes, lg.number_of_edges,n_t_w,d_t, atak_cost, f])                                    # информация о компоненте
+    data_set = [n, fee, tr_time, wcc]                                                                                   # информация о блоке
+    return data_set
+
+
+def get_list(list_numb):                                                                                                # на вход число всех блоков в цепи (пока вводится руками)
+    a_b = os.listdir("F:\\blocks_stat")                                                                                 # считали какие обработанные файлы есть
+    a_b = [int(k[4:-5]) for k in a_b]                                                                                   # сняли номера
+    for i in a_b:
+        if i in list_numb: list_numb.remove(i)                                                                          # удалили уже обработанные номера
+    return list_numb
+
+def do_bl(i):                                                                                                           # обработка одного блока
+    with open("F:\\BTC_chain_1\\block_{}.json".format(i), "r") as fb:                                                   # открыли блок
+        if i ==0%7: print(i)                                                                                            # контроль выполнения с минимальным ожиданием очереди в консоль
+        jsb = json.load(fb)                                                                                             # подгрузили через json словарь из файла в переменную
+        gbs = get_block_stat(jsb, i)                                                                                    # отдали блок на обработку в функцию
+        with open("F:\\blocks_stat\\b_s_{}.json".format(i), "a") as fs:                                                 # запись
+            fs.write(str(gbs)+"\n")
+    return
+
+def main():
+    list_bl = [i for i in range(603217)]                                                                                # руками задали последний блок
+    list_bl = get_list(list_bl)                                                                                         # удалили уже обработанные
+    print(len(list_bl))
+    with Pool() as p:                                                                                                   # распараллелили
+        p.map(do_bl,list_bl)
+    return {"portvein": 777}
+
+
+if __name__ == '__main__':
+    main()
