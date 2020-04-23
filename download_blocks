@@ -1,0 +1,62 @@
+import json
+import os
+import requests
+from bs4 import BeautifulSoup
+from multiprocessing import Pool
+
+###user_agent =
+
+def clear_list(list_numb):
+    l_r = os.listdir("E:\\BTC_chain")
+    for i in list_numb:
+        if i in l_r: list_numb.remove(i)
+    return list_numb
+
+def scrap_proxi():
+  ###
+  return list_proxies
+
+def get_block(url, k):  # возвращает html
+    r = requests.get("https://blockchain.info/block-height/{}?format=json".format(url), headers={'User-Agent':user_agent}, proxies= {"http":"http://{}".format(k)}).text
+    with open("E:\\BTC_chain\\block_{}.json".format(url), "w") as f:
+        jsb = json.loads(r)
+        json.dump(jsb, f)
+    return
+
+
+def write_csv(data_set, k):  
+    with open('path\\BTC_chain\\block_{}.csv'.format(k), 'a') as f:
+        for j in data_set:
+            f.write(str(j) + "\n")
+    return
+
+def do_all(numb):
+    l_p = scrap_proxi()
+    k = 0
+    while True:
+        try:
+            get_block(numb, l_p[k])
+            print("got {}".format(numb))
+            break
+        except:
+            print("bad proxi")
+            if k == 50:
+                l_p = scrap_proxi()
+                print("--new proxi--")
+                k = 0
+            elif k<50:
+                k += 1
+            else: print("WTF")
+    return
+
+def main():
+    all_numbs = clear_list([i for i in range(602760)])
+    print(len(all_numbs))
+    with Pool(150) as p:
+        p.map(do_all, all_numbs)
+    print("easy")
+    return 1
+
+
+if __name__ == '__main__':
+    main()
